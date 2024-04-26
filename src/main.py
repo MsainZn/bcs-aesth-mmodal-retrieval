@@ -15,7 +15,10 @@ from torch.utils.data import Dataset
 from itertools import combinations
 from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
-from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model, ConvNextV2Model
+from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model
+from torchvision.models import resnet50, ResNet50_Weights, vgg16, VGG16_Weights
+
+from torch.nn import functional as F
 
 from transformers import  ViTConfig, AutoModel
 #, SwinModel, ConvNextModel, CaitModel, SwinFeatureExtractor, ConvNextImageProcessor, ConvNextConfig, CaitFeatureExtractor
@@ -80,7 +83,7 @@ def load_model(model, filepath, device='cpu'):
     print(f"Model loaded from {filepath}")
     return model
 
-def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, device='cpu', save_path='../tmp/'):
+def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, device='cpu', save_path='../bin/tmp/'):
     model.to(device)
     model.train()  # Set model to training mode
     best_acc = float('-inf')  
@@ -196,7 +199,7 @@ def evaluate_nddg(QNS_list, model, transform, device='cpu'):
 
 class Google_Base_Patch16_224(nn.Module):
     def __init__(self):
-        super(google_base_patch_16_224, self).__init__()
+        super().__init__()
         # Load the pre-trained deit_tiny_patch16_224 ViT model
         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
@@ -265,31 +268,154 @@ class DinoV2_Base_Patch16_224(nn.Module):
         outputs = self.model(input)
         return outputs.last_hidden_state[:, 0, :]
 
+class ResNet50_Base_224 (nn.Module):
+    def __init__(self, weights=ResNet50_Weights.DEFAULT):
+        super().__init__()
+        # Load the pre-trained ResNet50 model
+        if weights is not None:
+            weights = ResNet50_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
 
-
-
-# class ConvNextV2_Base_Patch16_224(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.feature_extractor =  AutoImageProcessor.from_pretrained("facebook/convnextv2-tiny-1k-224")
-#         self.model = ConvNextV2Model.from_pretrained("facebook/convnextv2-tiny-1k-224")
+        # Load the pre-trained ResNet50 model
+        base_model = resnet50(weights=weights)
         
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             processed = self.feature_extractor(images=image, return_tensors="pt")
-#             return processed['pixel_values'].squeeze(0)
-#         return transform
-    
-#     def forward(self, input):
-#         outputs = self.model(input)
-#         return outputs.last_hidden_state[:, 0, :]
+        # Remove the final fully connected layer to use the model as a fixed feature extractor
+        # Here we keep all layers up to, but not including, the final fully connected layer.
+        self.features = nn.Sequential(*list(base_model.children())[:-1])  # Remove the last layer (fc layer)
+        
+        # The output of 'self.features' will be a tensor of shape (batch_size, 2048, 1, 1) from the average pooling layer
+        # We will add an AdaptiveAvgPool layer to convert it to (batch_size, 2048) which is easier to use in most tasks
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-# class Cait_base_patch_16_224(nn.Module):
+    def forward(self, x):
+        # Pass input through the feature layers
+        x = self.features(x)
+        
+        # Apply adaptive pooling to convert the output to shape (batch_size, 2048)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten the output
+        
+        return x
+    
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            # Apply the necessary transformations
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+            return transform(image)
+        return transform
+
+class VGG16_Base_224(nn.Module):
+    def __init__(self, weights=VGG16_Weights.DEFAULT):
+        super().__init__()
+        # Load the pre-trained VGG16 model
+        if weights is not None:
+            weights = VGG16_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
+
+        # Load the pre-trained VGG16 model
+        base_model = vgg16(weights=weights)
+        
+        # Remove the classifier layer to use the model as a fixed feature extractor
+        # Here we keep all layers up to, but not including, the classifier layer.
+        self.features = base_model.features  # Keep the convolutional feature extractor part
+        
+        # The output of 'self.features' will be a tensor of shape (batch_size, 512, 7, 7)
+        # We will add an AdaptiveAvgPool layer to convert it to (batch_size, 512) which is easier to use in most tasks
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((7, 7))
+
+    def forward(self, x):
+        # Pass input through the feature layers
+        x = self.features(x)
+        
+        # Apply adaptive pooling to resize the output to shape (batch_size, 512)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten the output
+        
+        return x
+    
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            # Apply the necessary transformations
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+            return transform(image)
+        return transform
+
+
+
+class VGG16_Base_224_MLP(nn.Module):
+    def __init__(self, weights=VGG16_Weights.DEFAULT, feature_dim=512, embedding_size=256):
+        super().__init__()
+        # Load the pre-trained VGG16 model
+        if weights is not None:
+            weights = VGG16_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
+
+        # Load the pre-trained VGG16 model
+        base_model = vgg16(weights=weights)
+        
+        # Remove the classifier layer to use the model as a fixed feature extractor
+        # Here we keep all layers up to, but not including, the classifier layer.
+        self.features = base_model.features  # Keep the convolutional feature extractor part
+        
+        # The output of 'self.features' will be a tensor of shape (batch_size, 512, 7, 7)
+        # We will add an AdaptiveAvgPool layer to convert it to (batch_size, 512) which is easier to use in most tasks
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((7, 7))
+
+        # Additional MLP Layers
+        self.fc1 = nn.Linear(feature_dim * 49, embedding_size)  # 512*7*7 = 25088 inputs to 256
+        self.relu1 = nn.ReLU()
+        self.fc2 = nn.Linear(embedding_size, 128)  # Second MLP layer
+        self.relu2 = nn.ReLU()
+        self.fc3 = nn.Linear(128, 64)  # Third MLP layer
+
+    def forward(self, x):
+        # Pass input through the feature layers
+        x = self.features(x)
+        
+        # Apply adaptive pooling to resize the output to shape (batch_size, 512, 7, 7)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten the output
+
+        # Pass through the fully connected layers with ReLU activation
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        x = self.relu2(x)
+        x = self.fc3(x)
+        
+        return x
+    
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            # Apply the necessary transformations
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+            return transform(image)
+        return transform
+
+# class google_base_patch_16_224_MLP(nn.Module):
 #     def __init__(self):
-#         super().__init__()
-#         self.feature_extractor = CaitIImageProcessor.from_pretrained('facebook/cait-base-patch16-224')
-#         self.model = CaitModel.from_pretrained('facebook/cait-base-patch16-224')
+#         super(google_base_patch_16_224_MLP, self).__init__()
+#         # Load the pre-trained deit_tiny_patch16_224 ViT model
+#         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
+#         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+    
+#     # Define MLP layers
+#         self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
+#         self.relu1 = nn.ReLU()          # ReLU activation
+#         self.fc2 = nn.Linear(512, 256)  # Second MLP layer
+#         self.relu2 = nn.ReLU()          # ReLU activation
 
 #     def get_transform(self):
 #         def transform(image_path):
@@ -300,7 +426,69 @@ class DinoV2_Base_Patch16_224(nn.Module):
     
 #     def forward(self, input):
 #         outputs = self.model(input)
-#         return outputs.last_hidden_state[:, 0, :]
+#         # Assuming the model outputs the last_hidden_state directly
+#         featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
+#         x = self.fc1(featureVec)
+#         x = self.relu1(x)
+#         x = self.fc2(x)
+#         featureVec = self.relu2(x)
+#         return featureVec
+
+# class ResNet50_Base_224_MLP(nn.Module):
+#     def __init__(self, feature_dim=2048, embedding_size=512, weights=ResNet50_Weights.DEFAULT):
+#         super().__init__()
+#         # Load the pre-trained ResNet50 model
+#         if weights is not None:
+#             weights = ResNet50_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
+
+#         # Load the pre-trained ResNet50 model
+#         base_model = resnet50(weights=weights)
+                
+#         # Remove the last fully connected layer
+#         self.features = nn.Sequential(*list(base_model.children())[:-1])
+        
+#         # Adaptive pooling to make sure output size is consistent
+#         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
+
+#         # Add a fully connected layer to transform the feature space
+#         self.fc1 = nn.Linear(feature_dim, embedding_size)
+        
+#         # Add another layer, if needed, you can increase the complexity here
+#         self.fc2 = nn.Linear(embedding_size, 256)
+
+#         # Optional: Add a batch normalization layer
+#         self.batch_norm = nn.BatchNorm1d(256)
+
+#         # Optional: Add a Dropout layer to prevent overfitting
+#         self.dropout = nn.Dropout(0.5)
+
+#     def forward(self, x):
+#         # Extract features from the base model
+#         x = self.features(x)
+#         x = self.adaptive_pool(x)
+#         x = x.view(x.size(0), -1)  # Flatten the output
+
+#         # Pass through the first fully connected layer
+#         x = F.relu(self.fc1(x))
+
+#         # Pass through the second fully connected layer (with optional batch normalization and dropout)
+#         x = self.fc2(x)
+#         x = self.batch_norm(x)
+#         x = F.dropout(x, p=0.5, training=self.training)
+
+#         return x
+
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             # Apply the necessary transformations
+#             transform = transforms.Compose([
+#                 transforms.Resize((224, 224)),
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+#             ])
+#             return transform(image)
+#         return transform
 
 # class BaseNoPoolViTModel(ViTModel):
 #     def __init__(self, config):
@@ -348,71 +536,6 @@ class DinoV2_Base_Patch16_224(nn.Module):
 #         # Assuming the model outputs the last_hidden_state directly
 #         featureVec = outputs[:, 0, :]  
 #         return featureVec
-
-# class google_base_patch_16_224_MLP(nn.Module):
-#     def __init__(self):
-#         super(google_base_patch_16_224_MLP, self).__init__()
-#         # Load the pre-trained deit_tiny_patch16_224 ViT model
-#         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-#         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
-    
-#     # Define MLP layers
-#         self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
-#         self.relu1 = nn.ReLU()          # ReLU activation
-#         self.fc2 = nn.Linear(512, 256)  # Second MLP layer
-#         self.relu2 = nn.ReLU()          # ReLU activation
-
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             processed = self.feature_extractor(images=image, return_tensors="pt")
-#             return processed['pixel_values'].squeeze(0)
-#         return transform
-    
-#     def forward(self, input):
-#         outputs = self.model(input)
-#         # Assuming the model outputs the last_hidden_state directly
-#         featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
-#         x = self.fc1(featureVec)
-#         x = self.relu1(x)
-#         x = self.fc2(x)
-#         featureVec = self.relu2(x)
-#         return featureVec
-
-# class Swin_Base_Patch4_Window7_224(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         self.feature_extractor = SwinFeatureExtractor.from_pretrained('microsoft/swin-base-patch4-window7-224')
-#         self.model = SwinModel.from_pretrained('microsoft/swin-base-patch4-window7-224')
-
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             processed = self.feature_extractor(images=image, return_tensors="pt")
-#             return processed['pixel_values'].squeeze(0)
-#         return transform
-    
-#     def forward(self, input):
-#         outputs = self.model(input)
-#         return outputs.last_hidden_state[:, 0, :]
-
-# class ConvNext_base_patch_16_224(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#         # This will automatically load the necessary config along with the model weights.
-#         self.feature_extractor = ConvNextImageProcessor.from_pretrained('facebook/convnext-base-224')
-#         self.model = ConvNextModel.from_pretrained('facebook/convnext-base-224')
-
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             processed = self.feature_extractor(images=image, return_tensors="pt")
-#             return processed['pixel_values'].squeeze(0)
-#         return transform
-    
-#     def forward(self, input):
-#         outputs = self.model(input)
-#         return outputs.last_hidden_state[:, 0, :]
 
 
 #Returns normalized discounted Cumulative gain
@@ -943,17 +1066,18 @@ QNS_list_train = QNS_list_train[0:2]
 QNS_list_test = QNS_list_test[0:2]
 
 # Define Model
-# model = Google_Base_Patch16_224()
+model = Google_Base_Patch16_224()
 # model = DeiT_Base_Patch16_224()
 # model = Beit_Base_Patch16_224()
 # model = DinoV2_Base_Patch16_224()
+# model = ResNet50_Base_224()
+# model = VGG16_Base_224()
+# print(model)
 
-
-# model = ConvNextV2_Base_Patch16_224()
-# model = NoPoolModifiedViT()
 # model = Google_Base_Patch16_224_MLP()
-# model  = ConvNext_Base() # WIERD ACCURACY!!!!
-# model  = Swin_Base_Patch4_Window7_224()
+# model = ResNet50_Base_224_MLP()
+# model = VGG16_Base_224_MLP()
+
 
 # Define Dataset & Dataloaders & Optimization Parameters
 train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
@@ -969,6 +1093,6 @@ model, _, _ = train_triplets(model, train_loader, test_loader, optimizer, criter
 print('Evaluation...')
 print(f'Train-NDDG: {evaluate_nddg(QNS_list_train, model, transform=model.get_transform(), device=device)[0]} Test-NDDG: {evaluate_nddg(QNS_list_test, model, transform=model.get_transform(), device=device)[0]}')
 
-print('Saving...')
-save_model(model, f'{path_save+model_name}.pl')
-print('Done!')
+# print('Saving...')
+# save_model(model, f'{path_save+model_name}.pl')
+# print('Done!')
