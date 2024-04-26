@@ -39,19 +39,10 @@ class TripletDataset(Dataset):
     
     def __getitem__(self, index):
         query, pos, neg = self.triplets[index]
-
-        query = Image.open(query).convert('RGB')
-        pos = Image.open(pos).convert('RGB')
-        neg = Image.open(neg).convert('RGB')
-
-        query = self.transform(query)
-        pos   = self.transform(pos)
-        neg   = self.transform(neg)
-
         return {
-            'query': query['pixel_values'].squeeze(0),  # Assuming transform outputs a dict with 'pixel_values'
-            'pos': pos['pixel_values'].squeeze(0),
-            'neg': neg['pixel_values'].squeeze(0)
+            'query': self.transform(query),  # Assuming transform outputs a dict with 'pixel_values'
+            'pos': self.transform(pos),
+            'neg': self.transform(neg)
         }
 
 def save_model(model, filepath):
@@ -86,7 +77,7 @@ def load_model(model, filepath, device='cpu'):
     print(f"Model loaded from {filepath}")
     return model
 
-def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, device='cpu'):
+def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, device='cpu', save_path='../tmp/'):
     model.to(device)
     model.train()  # Set model to training mode
     best_acc = float('-inf')  
@@ -127,7 +118,7 @@ def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_e
         if test_acc > best_acc:
             best_acc = test_acc
             # Save the best model
-            torch.save(model.state_dict(), f'{os.getcwd()}+{best_acc:.5f}.pl')
+            torch.save(model.state_dict(), f'{save_path}{current_time.strftime("%Y-%m-%d %H_%M_%S")}-{best_acc:.5f}.pl')
             print(f"New best model saved with accuracy: {best_acc:.5f}")
 
     print('Finished Training')
@@ -185,14 +176,12 @@ def evaluate_nddg(QNS_list, model, transform, device='cpu'):
         for q_element in QNS_list:
             fss = []
             # Load and transform the query image
-            query_image = Image.open(q_element.query_vector).convert('RGB')
-            query_tensor = transform(query_image)['pixel_values'].unsqueeze(0).to(device)
+            query_tensor = transform(q_element.query_vector).unsqueeze(0).to(device)
             vec_ref = model(query_tensor)
 
             for neighbor_path in q_element.neighbor_vectors:
                 # Load and transform the neighbor image
-                neighbor_image = Image.open(neighbor_path).convert('RGB')
-                neighbor_tensor = transform(neighbor_image)['pixel_values'].unsqueeze(0).to(device)
+                neighbor_tensor = transform(neighbor_path).unsqueeze(0).to(device)
                 vec_i = model(neighbor_tensor)
 
                 distf = torch.norm(vec_ref - vec_i)
@@ -237,48 +226,18 @@ class NoPoolModifiedViT(nn.Module):
         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
     
     def get_transform(self):
-        def transform(image):
-            return self.feature_extractor(images=image, return_tensors="pt")
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
         return transform
+    
     
     def forward(self, input):
         outputs = self.model(input)
         # Assuming the model outputs the last_hidden_state directly
         featureVec = outputs[:, 0, :]  
         return featureVec
-
-class ModifiedViT(nn.Module):
-    def __init__(self, path, device):
-        super(ModifiedViT, self).__init__()
-        # Load the pre-trained deit_tiny_patch16_224 ViT model
-        self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-        self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
-        self.datasetPath = path
-        self.device = device
-
-    def image_finder(self, filename):
-        path = self.datasetPath
-        basename = os.path.basename(filename)
-        resized_filename = os.path.splitext(basename)[0] + '_resized.jpg'  # Append '_resized.jpg' to the original filename
-        image_path = os.path.join(path, resized_filename)
-        image = Image.open(image_path)
-        # Apply feature extractor, which includes resizing and normalization
-        inputs = self.feature_extractor(images=image, return_tensors="pt")
-        return inputs
-
-    def feature_vector_generation(self, filename):
-        inputs = self.image_finder(filename)
-        inputs = {key: val.to(self.device) for key, val in inputs.items()}  # Transfer inputs to the correct device
-        processed = self.model(**inputs)
-        featureVec = processed.last_hidden_state[:, 0, :]
-        return featureVec
-    
-    def forward(self, ref_filename, img_filename):
-        # Process into feature vectors
-        featureVec_ref = self.feature_vector_generation(ref_filename)
-        featureVec_img = self.feature_vector_generation(img_filename)
-        diff_img_ref = torch.norm(featureVec_ref-featureVec_img)
-        return diff_img_ref
 
 class ViT_base_patch_16_224_MLP(nn.Module):
     def __init__(self):
@@ -294,9 +253,10 @@ class ViT_base_patch_16_224_MLP(nn.Module):
         self.relu2 = nn.ReLU()          # ReLU activation
 
     def get_transform(self):
-        def transform(image):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
             processed = self.feature_extractor(images=image, return_tensors="pt")
-            return {'pixel_values': processed['pixel_values'].squeeze(0)}  # Ensure this is a dict with 'pixel_values'
+            return processed['pixel_values'].squeeze(0)
         return transform
     
     def forward(self, input):
@@ -317,9 +277,10 @@ class ViT_base_patch_16_224(nn.Module):
         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
     
     def get_transform(self):
-        def transform(image):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
             processed = self.feature_extractor(images=image, return_tensors="pt")
-            return processed['pixel_values'].squeeze(0)  # Ensure this is a dict with 'pixel_values'
+            return processed['pixel_values'].squeeze(0)
         return transform
     
     def forward(self, input):
@@ -346,19 +307,6 @@ def test_ndcg(distances):
 
   return res
 
-def sort_indexes_by_values(arr):
-    """
-    Sorts the indexes of a numpy array based on its values.
-
-    Args:
-    arr (np.array): The numpy array whose indexes are to be sorted.
-
-    Returns:
-    np.array: An array of indexes, sorted based on the values of the input array.
-    """
-    # Use np.argsort to get the sorted indices
-    sorted_indices = np.argsort(arr)
-    return sorted_indices
 
 def is_valid_date(date_str):
     try:
@@ -843,9 +791,10 @@ patient_info = csvs_path + 'patient_info.csv'
 patient_images_info = csvs_path + 'patient_images.csv'
 catalogue_info = csvs_path + 'catalogue_info.csv'
 catalogue_user_info = csvs_path + 'catalogue_user_info.csv'
-train_pickle_path = current_directory + '/../pickleDir/qns_list_train_F.pkl'
-test_pickle_path  = current_directory + '/../pickleDir/qns_list_test_F.pkl'
-path_save = '../pickleDir/modelFinal.pl'
+train_pickle_path = current_directory + '/../data/pickles/qns_list_train_F.pkl'
+test_pickle_path  = current_directory + '/../data/pickles/qns_list_test_F.pkl'
+path_save = '../bin/'
+model_name = 'testings'
 
 # Configs
 np.random.seed(10)
@@ -869,7 +818,7 @@ QNS_list_test = QNS_list_test[0:2]
 
 # Define Model
 #model = NoPoolModifiedViT()
-# model  = ViT_base_patch_16_224()
+#model  = ViT_base_patch_16_224()
 model  = ViT_base_patch_16_224_MLP()
 
 # Define Dataset & Dataloaders & Optimization Parameters
@@ -882,6 +831,10 @@ optimizer     = optim.Adam(model.parameters(), lr=lr)
 
 print('Training...')
 model, _, _ = train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs=num_epochs, device=device)
+
+print('Evaluation...')
 print(f'Train-NDDG: {evaluate_nddg(QNS_list_train, model, transform=model.get_transform(), device=device)[0]} Test-NDDG: {evaluate_nddg(QNS_list_test, model, transform=model.get_transform(), device=device)[0]}')
-save_model(model, '../pickleDir/modelFinal.pl')
+
+print('Saving...')
+save_model(model, f'{path_save+model_name}.pl')
 print('Done!')
