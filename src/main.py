@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 import pandas as pd
 import numpy as np
 import pickle
-from datetime import datetime, date
+from datetime import datetime
 import string
 from random import sample
 from scipy.spatial.distance import euclidean
@@ -15,7 +15,10 @@ from torch.utils.data import Dataset
 from itertools import combinations
 from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
-from transformers import ViTImageProcessor, ViTModel, ViTConfig
+from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model, ConvNextV2Model
+
+from transformers import  ViTConfig, AutoModel
+#, SwinModel, ConvNextModel, CaitModel, SwinFeatureExtractor, ConvNextImageProcessor, ConvNextConfig, CaitFeatureExtractor
 
 os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
 
@@ -191,87 +194,9 @@ def evaluate_nddg(QNS_list, model, transform, device='cpu'):
     model_acc = 100 * np.mean(test_ndcg(final_order))
     return model_acc, final_order
 
-class BaseNoPoolViTModel(ViTModel):
-    def __init__(self, config):
-        super().__init__(config)
-        # Deactivate the pooler directly if it exists
-        self.pooler = None
-
-    def forward(
-        self,
-        pixel_values,
-        head_mask=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-    ):
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        outputs = super().forward(
-            pixel_values=pixel_values,
-            head_mask=head_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-        # Use last hidden state since pooler is deactivated
-        last_hidden_state = outputs.last_hidden_state
-        return last_hidden_state
-
-class NoPoolModifiedViT(nn.Module):
+class Google_Base_Patch16_224(nn.Module):
     def __init__(self):
-        super(NoPoolModifiedViT, self).__init__()
-        # Configure and initialize the custom ViT model
-        config = ViTConfig.from_pretrained('google/vit-base-patch16-224')
-        self.model = BaseNoPoolViTModel(config)
-        self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-    
-    def get_transform(self):
-        def transform(image_path):
-            image = Image.open(image_path).convert('RGB')
-            processed = self.feature_extractor(images=image, return_tensors="pt")
-            return processed['pixel_values'].squeeze(0)
-        return transform
-    
-    
-    def forward(self, input):
-        outputs = self.model(input)
-        # Assuming the model outputs the last_hidden_state directly
-        featureVec = outputs[:, 0, :]  
-        return featureVec
-
-class ViT_base_patch_16_224_MLP(nn.Module):
-    def __init__(self):
-        super(ViT_base_patch_16_224_MLP, self).__init__()
-        # Load the pre-trained deit_tiny_patch16_224 ViT model
-        self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-        self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
-    
-    # Define MLP layers
-        self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
-        self.relu1 = nn.ReLU()          # ReLU activation
-        self.fc2 = nn.Linear(512, 256)  # Second MLP layer
-        self.relu2 = nn.ReLU()          # ReLU activation
-
-    def get_transform(self):
-        def transform(image_path):
-            image = Image.open(image_path).convert('RGB')
-            processed = self.feature_extractor(images=image, return_tensors="pt")
-            return processed['pixel_values'].squeeze(0)
-        return transform
-    
-    def forward(self, input):
-        outputs = self.model(input)
-        # Assuming the model outputs the last_hidden_state directly
-        featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
-        x = self.fc1(featureVec)
-        x = self.relu1(x)
-        x = self.fc2(x)
-        featureVec = self.relu2(x)
-        return featureVec
-
-class ViT_base_patch_16_224(nn.Module):
-    def __init__(self):
-        super(ViT_base_patch_16_224, self).__init__()
+        super(google_base_patch_16_224, self).__init__()
         # Load the pre-trained deit_tiny_patch16_224 ViT model
         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
@@ -288,6 +213,207 @@ class ViT_base_patch_16_224(nn.Module):
         # Assuming the model outputs the last_hidden_state directly
         featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
         return featureVec
+
+class DeiT_Base_Patch16_224(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.feature_extractor = DeiTImageProcessor.from_pretrained('facebook/deit-base-patch16-224')
+        self.model = DeiTModel.from_pretrained('facebook/deit-base-patch16-224')
+
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        return outputs.last_hidden_state[:, 0, :]  # Extract the [CLS] token's embeddings
+
+class Beit_Base_Patch16_224(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.feature_extractor = BeitImageProcessor.from_pretrained('microsoft/beit-base-patch16-224')
+        self.model = BeitModel.from_pretrained('microsoft/beit-base-patch16-224')
+
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        return outputs.last_hidden_state[:, 0, :]
+
+class DinoV2_Base_Patch16_224(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.feature_extractor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+        self.model = Dinov2Model.from_pretrained('facebook/dinov2-base')
+        
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        return outputs.last_hidden_state[:, 0, :]
+
+
+
+
+# class ConvNextV2_Base_Patch16_224(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.feature_extractor =  AutoImageProcessor.from_pretrained("facebook/convnextv2-tiny-1k-224")
+#         self.model = ConvNextV2Model.from_pretrained("facebook/convnextv2-tiny-1k-224")
+        
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         return outputs.last_hidden_state[:, 0, :]
+
+# class Cait_base_patch_16_224(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.feature_extractor = CaitIImageProcessor.from_pretrained('facebook/cait-base-patch16-224')
+#         self.model = CaitModel.from_pretrained('facebook/cait-base-patch16-224')
+
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         return outputs.last_hidden_state[:, 0, :]
+
+# class BaseNoPoolViTModel(ViTModel):
+#     def __init__(self, config):
+#         super().__init__(config)
+#         # Deactivate the pooler directly if it exists
+#         self.pooler = None
+
+#     def forward(
+#         self,
+#         pixel_values,
+#         head_mask=None,
+#         output_attentions=None,
+#         output_hidden_states=None,
+#         return_dict=None,
+#     ):
+#         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+#         outputs = super().forward(
+#             pixel_values=pixel_values,
+#             head_mask=head_mask,
+#             output_attentions=output_attentions,
+#             output_hidden_states=output_hidden_states,
+#             return_dict=return_dict,
+#         )
+#         # Use last hidden state since pooler is deactivated
+#         last_hidden_state = outputs.last_hidden_state
+#         return last_hidden_state
+
+# class NoPoolModifiedViT(nn.Module):
+#     def __init__(self):
+#         super(NoPoolModifiedViT, self).__init__()
+#         # Configure and initialize the custom ViT model
+#         config = ViTConfig.from_pretrained('google/vit-base-patch16-224')
+#         self.model = BaseNoPoolViTModel(config)
+#         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
+    
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         # Assuming the model outputs the last_hidden_state directly
+#         featureVec = outputs[:, 0, :]  
+#         return featureVec
+
+# class google_base_patch_16_224_MLP(nn.Module):
+#     def __init__(self):
+#         super(google_base_patch_16_224_MLP, self).__init__()
+#         # Load the pre-trained deit_tiny_patch16_224 ViT model
+#         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
+#         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+    
+#     # Define MLP layers
+#         self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
+#         self.relu1 = nn.ReLU()          # ReLU activation
+#         self.fc2 = nn.Linear(512, 256)  # Second MLP layer
+#         self.relu2 = nn.ReLU()          # ReLU activation
+
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         # Assuming the model outputs the last_hidden_state directly
+#         featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
+#         x = self.fc1(featureVec)
+#         x = self.relu1(x)
+#         x = self.fc2(x)
+#         featureVec = self.relu2(x)
+#         return featureVec
+
+# class Swin_Base_Patch4_Window7_224(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.feature_extractor = SwinFeatureExtractor.from_pretrained('microsoft/swin-base-patch4-window7-224')
+#         self.model = SwinModel.from_pretrained('microsoft/swin-base-patch4-window7-224')
+
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         return outputs.last_hidden_state[:, 0, :]
+
+# class ConvNext_base_patch_16_224(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         # This will automatically load the necessary config along with the model weights.
+#         self.feature_extractor = ConvNextImageProcessor.from_pretrained('facebook/convnext-base-224')
+#         self.model = ConvNextModel.from_pretrained('facebook/convnext-base-224')
+
+#     def get_transform(self):
+#         def transform(image_path):
+#             image = Image.open(image_path).convert('RGB')
+#             processed = self.feature_extractor(images=image, return_tensors="pt")
+#             return processed['pixel_values'].squeeze(0)
+#         return transform
+    
+#     def forward(self, input):
+#         outputs = self.model(input)
+#         return outputs.last_hidden_state[:, 0, :]
+
 
 #Returns normalized discounted Cumulative gain
 def test_ndcg(distances):       
@@ -306,7 +432,6 @@ def test_ndcg(distances):
     res[i]= dcg_aux/idcg_aux
 
   return res
-
 
 def is_valid_date(date_str):
     try:
@@ -743,7 +868,7 @@ def edit_name_incase_using_resized(path, filename):
        image_path = os.path.join(path, resized_filename)
        return image_path
 
-def Sample_Manager(samples_path, train_pickle_path, test_pickle_path, catalogue_info, catalogue_user_info, patient_info, favorite_image_info,  patient_images_info, catalogue_type='E', doctor_code=-1, split_ratio=0.8, default=True):
+def Sample_Manager(samples_path, train_pickle_path, test_pickle_path, catalogue_info, catalogue_user_info, patient_info, favorite_image_info, patient_images_info, catalogue_type='E', doctor_code=-1, split_ratio=0.8, default=True):
 
     if default:
         print('Reading Samples...')
@@ -803,6 +928,7 @@ device = "cuda:0" # "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {device}")
 lr=0.00001
 num_epochs=1
+batch_size=16
 margin = 0.0001
 split_ratio=0.8
 catalogue_type = 'E'
@@ -817,15 +943,23 @@ QNS_list_train = QNS_list_train[0:2]
 QNS_list_test = QNS_list_test[0:2]
 
 # Define Model
-#model = NoPoolModifiedViT()
-#model  = ViT_base_patch_16_224()
-model  = ViT_base_patch_16_224_MLP()
+# model = Google_Base_Patch16_224()
+# model = DeiT_Base_Patch16_224()
+# model = Beit_Base_Patch16_224()
+# model = DinoV2_Base_Patch16_224()
+
+
+# model = ConvNextV2_Base_Patch16_224()
+# model = NoPoolModifiedViT()
+# model = Google_Base_Patch16_224_MLP()
+# model  = ConvNext_Base() # WIERD ACCURACY!!!!
+# model  = Swin_Base_Patch4_Window7_224()
 
 # Define Dataset & Dataloaders & Optimization Parameters
 train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
 test_dataset  = TripletDataset(images_path, QNS_list_test,  transform=model.get_transform())
-train_loader  = DataLoader(train_dataset, batch_size=16, shuffle=False) # later it should bea turned on ...
-test_loader   = DataLoader(test_dataset,  batch_size=16, shuffle=False)
+train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # later it should bea turned on ...
+test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
 criterion     = TripletMarginLoss(margin=margin, p=2)
 optimizer     = optim.Adam(model.parameters(), lr=lr)
 
