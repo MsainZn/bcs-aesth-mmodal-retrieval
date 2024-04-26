@@ -17,11 +17,8 @@ from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
 from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model
 from torchvision.models import resnet50, ResNet50_Weights, vgg16, VGG16_Weights
-
 from torch.nn import functional as F
-
 from transformers import  ViTConfig, AutoModel
-#, SwinModel, ConvNextModel, CaitModel, SwinFeatureExtractor, ConvNextImageProcessor, ConvNextConfig, CaitFeatureExtractor
 
 os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
 
@@ -347,8 +344,6 @@ class VGG16_Base_224(nn.Module):
             ])
             return transform(image)
         return transform
-
-
 
 class VGG16_Base_224_MLP(nn.Module):
     def __init__(self, weights=VGG16_Weights.DEFAULT, feature_dim=512, embedding_size=256):
