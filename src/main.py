@@ -1,3 +1,4 @@
+import sys
 import torch
 import torchvision.transforms as transforms
 import pandas as pd
@@ -15,7 +16,7 @@ from torch.utils.data import Dataset
 from itertools import combinations
 from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
-from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model
+from transformers import AutoImageProcessor, ViTImageProcessor, ViTModel, DeiTImageProcessor, DeiTModel, BeitImageProcessor, BeitModel, Dinov2Model, ImageGPTModel
 from torchvision.models import resnet50, ResNet50_Weights, vgg16, VGG16_Weights
 from torch.nn import functional as F
 from transformers import  ViTConfig, AutoModel
@@ -80,51 +81,57 @@ def load_model(model, filepath, device='cpu'):
     print(f"Model loaded from {filepath}")
     return model
 
-def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, device='cpu', save_path='../bin/tmp/'):
-    model.to(device)
-    model.train()  # Set model to training mode
-    best_acc = float('-inf')  
-    for epoch in range(num_epochs):
-        running_loss = 0.0
-        for data in train_loader:
-
-            # Zero the parameter gradients
-            optimizer.zero_grad()  
-
-            queries = data['query'].to(device)
-            positives = data['pos'].to(device)
-            negatives = data['neg'].to(device)
+def train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs, model_name, device='cpu', path_save='../bin/'):
+    # Open a log file in append mode
+    os.makedirs(f'{path_save}{model_name}', exist_ok=True)
+    with open(f'{path_save}{model_name}/Train_info.log', 'a') as f:
+        # Redirect print statements to the file
+        original_stdout = sys.stdout  # Save the original stdout
+        sys.stdout = f
+        print(f'{model}')
+        model.to(device)
+        model.train()  # Set model to training mode
+        best_acc = float('-inf')  
+        for epoch in range(num_epochs):
+            running_loss = 0.0
+            for data in train_loader:
+                optimizer.zero_grad()  # Zero the parameter gradients
+                queries = data['query'].to(device)
+                positives = data['pos'].to(device)
+                negatives = data['neg'].to(device)
+                
+                # Forward pass to get outputs and calculate loss
+                anchor_embeddings = model(queries)
+                pos_embeddings = model(positives)
+                neg_embeddings = model(negatives)
+                loss = criterion(anchor_embeddings, pos_embeddings, neg_embeddings)
+                
+                # Backward and optimize
+                loss.backward()
+                optimizer.step()
+                
+                # Statistics
+                running_loss += loss.item() * queries.size(0)
             
-            # Forward pass to get outputs and calculate loss
-            anchor_embeddings = model(queries)
-            pos_embeddings    = model(positives)
-            neg_embeddings    = model(negatives)
-            loss = criterion(anchor_embeddings, pos_embeddings, neg_embeddings)
-            
-            # Backward and optimize
-            loss.backward()
-            optimizer.step()
+            # Evaluation
+            epoch_loss = running_loss
+            train_acc = evaluate_triplets(model, train_loader, device)
+            test_acc = evaluate_triplets(model, test_loader, device)
 
-            # Statistics
-            running_loss = running_loss + loss.item() * queries.size(0)
-        
-        # Evaluation
-        epoch_loss = running_loss # / len(train_loader.dataset)
-        train_acc = evaluate_triplets(model, train_loader, device)
-        test_acc  = evaluate_triplets(model, test_loader, device)
+            current_time = datetime.now()
+            print(f'[{current_time.strftime("%Y-%m-%d %H:%M:%S")}] Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Train-Acc: {train_acc:.5f}, Test-Acc: {test_acc:.5f} Train-NDDG: {evaluate_nddg(QNS_list_train, model, transform=model.get_transform(), device=device)[0]} Test-NDDG: {evaluate_nddg(QNS_list_test, model, transform=model.get_transform(), device=device)[0]}')
+    
+            # Saving
+            if test_acc > best_acc:
+                best_acc = test_acc
+                torch.save(model.state_dict(), f'{path_save}{model_name}/Epoch-{epoch}-{current_time.strftime("%Y-%m-%d %H_%M_%S")}-{best_acc:.5f}.pl')
+                print(f"New best model saved with accuracy: {best_acc:.5f}")
 
-        current_time = datetime.now()
-        print(f'[{current_time.strftime("%Y-%m-%d %H:%M:%S")}] Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Train-Acc: {train_acc:.5f}, Test-Acc: {test_acc:.5f}')
-        #print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Train-Acc: {train_acc:.5f}, Test-Acc: {test_acc:.5f}')
+        print('Finished Training')
 
-        # Saving
-        if test_acc > best_acc:
-            best_acc = test_acc
-            # Save the best model
-            torch.save(model.state_dict(), f'{save_path}{current_time.strftime("%Y-%m-%d %H_%M_%S")}-{best_acc:.5f}.pl')
-            print(f"New best model saved with accuracy: {best_acc:.5f}")
+        # Reset stdout to original
+        sys.stdout = original_stdout
 
-    print('Finished Training')
     return model, epoch_loss, epoch
 
 def evaluate_triplets(model, data_loader, device='cpu'):
@@ -399,91 +406,178 @@ class VGG16_Base_224_MLP(nn.Module):
             return transform(image)
         return transform
 
-# class google_base_patch_16_224_MLP(nn.Module):
-#     def __init__(self):
-#         super(google_base_patch_16_224_MLP, self).__init__()
-#         # Load the pre-trained deit_tiny_patch16_224 ViT model
-#         self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
-#         self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
+class Google_Base_Patch16_224_MLP(nn.Module):
+    def __init__(self):
+        super(Google_Base_Patch16_224_MLP, self).__init__()
+        # Load the pre-trained deit_tiny_patch16_224 ViT model
+        self.feature_extractor = ViTImageProcessor.from_pretrained('google/vit-base-patch16-224')
+        self.model = ViTModel.from_pretrained('google/vit-base-patch16-224')
     
-#     # Define MLP layers
-#         self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
-#         self.relu1 = nn.ReLU()          # ReLU activation
-#         self.fc2 = nn.Linear(512, 256)  # Second MLP layer
-#         self.relu2 = nn.ReLU()          # ReLU activation
+    # Define MLP layers
+        self.fc1 = nn.Linear(768, 512)  # First MLP layer (change 768 to your feature size)
+        self.relu1 = nn.ReLU()          # ReLU activation
+        self.fc2 = nn.Linear(512, 256)  # Second MLP layer
+        self.relu2 = nn.ReLU()          # ReLU activation
 
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             processed = self.feature_extractor(images=image, return_tensors="pt")
-#             return processed['pixel_values'].squeeze(0)
-#         return transform
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
     
-#     def forward(self, input):
-#         outputs = self.model(input)
-#         # Assuming the model outputs the last_hidden_state directly
-#         featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
-#         x = self.fc1(featureVec)
-#         x = self.relu1(x)
-#         x = self.fc2(x)
-#         featureVec = self.relu2(x)
-#         return featureVec
+    def forward(self, input):
+        outputs = self.model(input)
+        # Assuming the model outputs the last_hidden_state directly
+        featureVec = outputs.last_hidden_state[:, 0, :]  # Use outputs.last_hidden_state if no pooling
+        x = self.fc1(featureVec)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        featureVec = self.relu2(x)
+        return featureVec
 
-# class ResNet50_Base_224_MLP(nn.Module):
-#     def __init__(self, feature_dim=2048, embedding_size=512, weights=ResNet50_Weights.DEFAULT):
-#         super().__init__()
-#         # Load the pre-trained ResNet50 model
-#         if weights is not None:
-#             weights = ResNet50_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
+class ResNet50_Base_224_MLP(nn.Module):
+    def __init__(self, feature_dim=2048, embedding_size=512, weights=ResNet50_Weights.DEFAULT):
+        super().__init__()
+        # Load the pre-trained ResNet50 model
+        if weights is not None:
+            weights = ResNet50_Weights.IMAGENET1K_V1  # Use the default ImageNet weights
 
-#         # Load the pre-trained ResNet50 model
-#         base_model = resnet50(weights=weights)
+        # Load the pre-trained ResNet50 model
+        base_model = resnet50(weights=weights)
                 
-#         # Remove the last fully connected layer
-#         self.features = nn.Sequential(*list(base_model.children())[:-1])
+        # Remove the last fully connected layer
+        self.features = nn.Sequential(*list(base_model.children())[:-1])
         
-#         # Adaptive pooling to make sure output size is consistent
-#         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
+        # Adaptive pooling to make sure output size is consistent
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-#         # Add a fully connected layer to transform the feature space
-#         self.fc1 = nn.Linear(feature_dim, embedding_size)
+        # Add a fully connected layer to transform the feature space
+        self.fc1 = nn.Linear(feature_dim, embedding_size)
         
-#         # Add another layer, if needed, you can increase the complexity here
-#         self.fc2 = nn.Linear(embedding_size, 256)
+        # Add another layer, if needed, you can increase the complexity here
+        self.fc2 = nn.Linear(embedding_size, 256)
 
-#         # Optional: Add a batch normalization layer
-#         self.batch_norm = nn.BatchNorm1d(256)
+        # Optional: Add a batch normalization layer
+        self.batch_norm = nn.BatchNorm1d(256)
 
-#         # Optional: Add a Dropout layer to prevent overfitting
-#         self.dropout = nn.Dropout(0.5)
+        # Optional: Add a Dropout layer to prevent overfitting
+        self.dropout = nn.Dropout(0.5)
 
-#     def forward(self, x):
-#         # Extract features from the base model
-#         x = self.features(x)
-#         x = self.adaptive_pool(x)
-#         x = x.view(x.size(0), -1)  # Flatten the output
+    def forward(self, x):
+        # Extract features from the base model
+        x = self.features(x)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten the output
 
-#         # Pass through the first fully connected layer
-#         x = F.relu(self.fc1(x))
+        # Pass through the first fully connected layer
+        x = F.relu(self.fc1(x))
 
-#         # Pass through the second fully connected layer (with optional batch normalization and dropout)
-#         x = self.fc2(x)
-#         x = self.batch_norm(x)
-#         x = F.dropout(x, p=0.5, training=self.training)
+        # Pass through the second fully connected layer (with optional batch normalization and dropout)
+        x = self.fc2(x)
+        x = self.batch_norm(x)
+        x = F.dropout(x, p=0.5, training=self.training)
 
-#         return x
+        return x
 
-#     def get_transform(self):
-#         def transform(image_path):
-#             image = Image.open(image_path).convert('RGB')
-#             # Apply the necessary transformations
-#             transform = transforms.Compose([
-#                 transforms.Resize((224, 224)),
-#                 transforms.ToTensor(),
-#                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-#             ])
-#             return transform(image)
-#         return transform
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            # Apply the necessary transformations
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+            return transform(image)
+        return transform
+
+class DeiT_Base_Patch16_224_MLP(nn.Module):
+    def __init__(self):
+        super(DeiT_Base_Patch16_224_MLP, self).__init__()
+        # Load the pre-trained DEIT model
+        self.feature_extractor = DeiTImageProcessor.from_pretrained('facebook/deit-base-patch16-224')
+        self.model = DeiTModel.from_pretrained('facebook/deit-base-patch16-224')
+    
+        # Define MLP layers
+        self.fc1 = nn.Linear(768, 512)  # Adjust the input size to match the output size of the last hidden layer of DeiT
+        self.relu1 = nn.ReLU()          # ReLU activation
+        self.fc2 = nn.Linear(512, 256)  # Further MLP layer
+        self.relu2 = nn.ReLU()          # ReLU activation
+
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        featureVec = outputs.last_hidden_state[:, 0, :]  # Extract the [CLS] token's embeddings
+        x = self.fc1(featureVec)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        featureVec = self.relu2(x)
+        return featureVec
+
+class DinoV2_Base_Patch16_224_MLP(nn.Module):
+    def __init__(self):
+        super(DinoV2_Base_Patch16_224_MLP, self).__init__()
+        # Load the pre-trained DinoV2 model
+        self.feature_extractor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+        self.model = Dinov2Model.from_pretrained('facebook/dinov2-base')
+
+        # Define MLP layers
+        self.fc1 = nn.Linear(768, 512)  # First MLP layer; adjust the size to match DinoV2 output
+        self.relu1 = nn.ReLU()          # ReLU activation
+        self.fc2 = nn.Linear(512, 256)  # Second MLP layer
+        self.relu2 = nn.ReLU()          # ReLU activation
+
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        featureVec = outputs.last_hidden_state[:, 0, :]  # Extract the embeddings from the [CLS] token, which is typically used for classification tasks
+        x = self.fc1(featureVec)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        featureVec = self.relu2(x)
+        return featureVec
+
+class Beit_Base_Patch16_224_MLP(nn.Module):
+    def __init__(self):
+        super(Beit_Base_Patch16_224_MLP, self).__init__()
+        # Load the pre-trained Beit model
+        self.feature_extractor = BeitImageProcessor.from_pretrained('microsoft/beit-base-patch16-224')
+        self.model = BeitModel.from_pretrained('microsoft/beit-base-patch16-224')
+
+        # Define MLP layers
+        self.fc1 = nn.Linear(768, 512)  # First MLP layer; size must match the output feature dimension of Beit
+        self.relu1 = nn.ReLU()          # ReLU activation
+        self.fc2 = nn.Linear(512, 256)  # Second MLP layer
+        self.relu2 = nn.ReLU()          # ReLU activation
+
+    def get_transform(self):
+        def transform(image_path):
+            image = Image.open(image_path).convert('RGB')
+            processed = self.feature_extractor(images=image, return_tensors="pt")
+            return processed['pixel_values'].squeeze(0)
+        return transform
+    
+    def forward(self, input):
+        outputs = self.model(input)
+        featureVec = outputs.last_hidden_state[:, 0, :]  # Extract the embeddings from the [CLS] token or equivalent
+        x = self.fc1(featureVec)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        featureVec = self.relu2(x)
+        return featureVec
 
 # class BaseNoPoolViTModel(ViTModel):
 #     def __init__(self, config):
@@ -531,7 +625,6 @@ class VGG16_Base_224_MLP(nn.Module):
 #         # Assuming the model outputs the last_hidden_state directly
 #         featureVec = outputs[:, 0, :]  
 #         return featureVec
-
 
 #Returns normalized discounted Cumulative gain
 def test_ndcg(distances):       
@@ -1037,7 +1130,6 @@ catalogue_user_info = csvs_path + 'catalogue_user_info.csv'
 train_pickle_path = current_directory + '/../data/pickles/qns_list_train_F.pkl'
 test_pickle_path  = current_directory + '/../data/pickles/qns_list_test_F.pkl'
 path_save = '../bin/'
-model_name = 'testings'
 
 # Configs
 np.random.seed(10)
@@ -1060,34 +1152,36 @@ patient_info, favorite_image_info, patient_images_info, catalogue_type=catalogue
 QNS_list_train = QNS_list_train[0:2]
 QNS_list_test = QNS_list_test[0:2]
 
-# Define Model
-model = Google_Base_Patch16_224()
-# model = DeiT_Base_Patch16_224()
-# model = Beit_Base_Patch16_224()
-# model = DinoV2_Base_Patch16_224()
-# model = ResNet50_Base_224()
-# model = VGG16_Base_224()
-# print(model)
+# Implemented Model
+models = {
+    "Google_Base_Patch16_224": Google_Base_Patch16_224(),
+    "DeiT_Base_Patch16_224": DeiT_Base_Patch16_224(),
+    "Beit_Base_Patch16_224": Beit_Base_Patch16_224(),
+    "DinoV2_Base_Patch16_224": DinoV2_Base_Patch16_224(),
+    "ResNet50_Base_224": ResNet50_Base_224(),
+    "VGG16_Base_224": VGG16_Base_224(),
 
-# model = Google_Base_Patch16_224_MLP()
-# model = ResNet50_Base_224_MLP()
-# model = VGG16_Base_224_MLP()
+    "Google_Base_Patch16_224_MLP": Google_Base_Patch16_224_MLP(),
+    "DinoV2_Base_Patch16_224_MLP": DinoV2_Base_Patch16_224_MLP(),
+    "Beit_Base_Patch16_224_MLP": Beit_Base_Patch16_224_MLP(),
+    "DeiT_Base_Patch16_224_MLP": DeiT_Base_Patch16_224_MLP(),
+    "ResNet50_Base_224_MLP": ResNet50_Base_224_MLP(),
+    "VGG16_Base_224_MLP": VGG16_Base_224_MLP()
+}
 
+for model_name, model in models.items():
+    
+    # Define Dataset & Dataloaders & Optimization Parameters
+    train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
+    test_dataset  = TripletDataset(images_path, QNS_list_test,  transform=model.get_transform())
+    train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # later it should bea turned on ...
+    test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+    criterion     = TripletMarginLoss(margin=margin, p=2)
+    optimizer     = optim.Adam(model.parameters(), lr=lr)
 
-# Define Dataset & Dataloaders & Optimization Parameters
-train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
-test_dataset  = TripletDataset(images_path, QNS_list_test,  transform=model.get_transform())
-train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # later it should bea turned on ...
-test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
-criterion     = TripletMarginLoss(margin=margin, p=2)
-optimizer     = optim.Adam(model.parameters(), lr=lr)
-
-print('Training...')
-model, _, _ = train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs=num_epochs, device=device)
-
-print('Evaluation...')
-print(f'Train-NDDG: {evaluate_nddg(QNS_list_train, model, transform=model.get_transform(), device=device)[0]} Test-NDDG: {evaluate_nddg(QNS_list_test, model, transform=model.get_transform(), device=device)[0]}')
-
-# print('Saving...')
-# save_model(model, f'{path_save+model_name}.pl')
-# print('Done!')
+    print('Training...')
+    model, _, _ = train_triplets(model, train_loader, test_loader, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
+    
+    print('Saving...')
+    save_model(model, f'{path_save}{model_name}/Finale.pl')
+    print(f'Done {model_name}!')
