@@ -8,6 +8,7 @@ from itertools import combinations
 
 os.environ['KMP_DUPLICATE_LIB_OK']='TRUE'
 
+# Creating The Triplets FOr Pytorch
 class TripletDataset(Dataset):
     def __init__(self, path, QNS_list, transform):
         self.transform = transform
@@ -33,40 +34,6 @@ class TripletDataset(Dataset):
             'pos': self.transform(pos),
             'neg': self.transform(neg)
         }
-
-# Save The Trained Model
-def save_model(model, filepath):
-    """
-    Save the model's state dictionary to a file.
-
-    Args:
-    - model: The PyTorch model to save.
-    - filepath: The path where the model will be saved.
-    """
-    torch.save(model.state_dict(), filepath)
-    print(f"Model saved to {filepath}")
-
-# Load A Trained Model
-def load_model(model, filepath, device='cpu'):
-    """
-    Load the model's state dictionary from a file.
-
-    Args:
-    - model: The PyTorch model to load the state dictionary into.
-    - filepath: The path from where the model will be loaded.
-    - device: The device where the model should be loaded ('cpu' or 'cuda:0').
-
-    Returns:
-    - model: The loaded PyTorch model.
-    """
-    # Load the model's state dictionary
-    model.load_state_dict(torch.load(filepath, map_location=device))
-    
-    # Set the model to evaluation mode
-    model.eval()
-    
-    print(f"Model loaded from {filepath}")
-    return model
 
 # Apply The Training Session
 def train_triplets(model, train_loader, test_loader, QNS_list_train, QNS_list_test, optimizer, criterion, num_epochs, model_name, device='cpu', path_save='../bin/'):
@@ -127,11 +94,11 @@ def evaluate_triplets(model, data_loader, device='cpu'):
     model.eval()  # Set the model to evaluation mode
     total_triplets = 0
     correct_predictions = 0
-    total_pos_distance = 0.0
-    total_neg_distance = 0.0
+    # total_pos_distance = 0.0
+    # total_neg_distance = 0.0
     
     with torch.no_grad():  # No gradients needed
-        for data in data_loader:
+        for batch_idx, data in enumerate(data_loader):
 
             queries = data['query'].to(device)
             positives = data['pos'].to(device)
@@ -147,12 +114,21 @@ def evaluate_triplets(model, data_loader, device='cpu'):
             neg_distances = torch.norm(anchor_embeddings - neg_embeddings, p=2, dim=1)
             
             # Update total distances
-            total_pos_distance = total_pos_distance + pos_distances.sum().item()
-            total_neg_distance = total_neg_distance + neg_distances.sum().item()
+            # total_pos_distance = total_pos_distance + pos_distances.sum().item()
+            # total_neg_distance = total_neg_distance + neg_distances.sum().item()
             
             # Count correct predictions (positive distance should be less than negative distance)
             correct_predictions = correct_predictions + (pos_distances < neg_distances).sum().item()
-            total_triplets = total_triplets + queries.size(0)
+            total_triplets = total_triplets + queries.size(0) # queries.size(0) len(queries)
+
+            # print(f'Batch {batch_idx}:')
+            # print(f'pos_distances: {pos_distances}')
+            # print(f'neg_distances: {neg_distances}')
+            # print(f'batch_correct_predictions: {(pos_distances < neg_distances).sum().item()}')
+            # print(f'batch_triplet_count: {len(queries)}')
+            # print(f'correct_predictions so far: {correct_predictions}')
+            # print(f'total_triplets so far: {total_triplets}')
+            # print('---')
 
     # Calculate average distances
     #avg_pos_distance = total_pos_distance / total_triplets
@@ -203,6 +179,41 @@ def test_ndcg(distances):
     res[i]= dcg_aux/idcg_aux
 
   return res
+
+# Save The Trained Model
+def save_model(model, filepath):
+    """
+    Save the model's state dictionary to a file.
+
+    Args:
+    - model: The PyTorch model to save.
+    - filepath: The path where the model will be saved.
+    """
+    torch.save(model.state_dict(), filepath)
+    print(f"Model saved to {filepath}")
+
+# Load A Trained Model
+def load_model(model, filepath, device='cpu'):
+    """
+    Load the model's state dictionary from a file.
+
+    Args:
+    - model: The PyTorch model to load the state dictionary into.
+    - filepath: The path from where the model will be loaded.
+    - device: The device where the model should be loaded ('cpu' or 'cuda:0').
+
+    Returns:
+    - model: The loaded PyTorch model.
+    """
+    # Load the model's state dictionary
+    model.load_state_dict(torch.load(filepath, map_location=device))
+    
+    # Set the model to evaluation mode
+    model.eval()
+    
+    print(f"Model loaded from {filepath}")
+    return model
+
 
 # def preprocess_single_sample(image_path, transform):
 #     x = Image.open(image_path).convert('RGB')

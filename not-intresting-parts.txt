@@ -1,0 +1,135 @@
+# UTILITIES THAT I DONT REALLY THINK INTRESTING ANYMORE!!!!
+
+# def weighted_cosine_similarity_torch(v1, v2, W_mat):
+#     """
+#     Calculate the weighted cosine similarity between two vectors using PyTorch.
+#     Args:
+#         v1, v2 (torch.Tensor): Input tensors.
+#         weights (torch.Tensor): Weights tensor.
+#     Returns:
+#         torch.Tensor: The weighted cosine similarity.
+#     """
+#     norm_v1 = torch.norm(v1)
+#     norm_v2 = torch.norm(v2)
+
+#     # Avoid division by zero
+#     if norm_v1 == 0 or norm_v2 == 0:
+#         return torch.tensor(0)
+
+#     weighted_v1 = torch.matmul(v1, W_mat)
+#     dot_product = torch.dot(weighted_v1, v2)
+
+#     return dot_product / (norm_v1 * norm_v2)
+
+# # Define the Cosine Similarity function using NumPy
+# def cosine_similarity_numpy(v1, v2):
+#     """
+#     Calculate the weighted cosine similarity between two vectors using NumPy.
+#     Args:
+#         v1, v2 (np.array): Input numpy arrays.
+#     Returns:
+#         float: The weighted cosine similarity.
+#     """
+#     norm_v1 = np.linalg.norm(v1)
+#     norm_v2 = np.linalg.norm(v2)
+
+#     # Avoid division by zero
+#     if norm_v1 == 0 or norm_v2 == 0:
+#         return 0
+    
+#     return np.dot(v1, v2) / (norm_v1 * norm_v2)
+
+# Define the Euclidean function using NumPy
+
+# # Define the Cosine Similarity function using NumPy
+# def weighted_cosine_similarity_numpy(v1, v2, weights):
+#     """
+#     Calculate the weighted cosine similarity between two vectors using NumPy.
+#     Args:
+#         v1, v2 (np.array): Input numpy arrays.
+#         weights (np.array): Weights numpy array.
+#     Returns:
+#         float: The weighted cosine similarity.
+#     """
+#     norm_v1 = np.linalg.norm(v1)
+#     norm_v2 = np.linalg.norm(v2)
+    
+#     # Avoid division by zero
+#     if norm_v1 == 0 or norm_v2 == 0:
+#         return 0
+
+#     weighted_v1 = np.matmul(v1, weights)
+#     dot_product = np.dot(weighted_v1, v2)
+    
+#     return dot_product / (norm_v1 * norm_v2)
+
+# def normalize_across_all_qns_feature_based(qns_list):
+#     all_elements = [[] for _ in range(5)]
+#     min_max_values = []
+
+#     # Collecting all elements for each position from both query and neighbor vectors
+#     for qns in qns_list:
+#         for i in range(5):
+#             all_elements[i].append(qns.query_vector[i])
+#             for neighbor_vector in qns.neighbor_vectors:
+#                 all_elements[i].append(neighbor_vector[i])
+    
+#     # Normalizing each position across all instances and storing min-max values
+#     for i in range(5):
+#         min_val = np.min(all_elements[i])
+#         max_val = np.max(all_elements[i])
+#         all_elements[i]  = [(v - min_val) / (max_val - min_val) if max_val != min_val else 0 for v in all_elements[i]]
+#         min_max_values.append((min_val, max_val))
+
+#     # Updating the vectors in QNS_structure instances
+#     for qns in qns_list:
+#         for i in range(5):
+#             qns.query_vector[i] = all_elements[i].pop(0)
+#             for neighbor_vector in qns.neighbor_vectors:
+#                 neighbor_vector[i] = all_elements[i].pop(0)
+
+#     return min_max_values
+
+# def normalize_on_query_feature_based(qns_list):
+#     save_ref = []
+#     # Collecting all elements for each position from both query and neighbor vectors
+#     for qns in qns_list:
+#         ref = qns.query_vector
+#         for neighbor_vector in qns.neighbor_vectors:
+#             for i in range(5):
+#                 if np.abs(ref[i]-neighbor_vector[i]) < 1e-3:
+#                     neighbor_vector[i] = 1
+#                 else:
+#                     neighbor_vector[i] = (ref[i]-neighbor_vector[i])/ref[i]
+#         save_ref.append(qns.query_vector)
+#         qns.query_vector = np.ones(qns.query_vector.shape, dtype=np.float64)
+
+#     return save_ref
+
+# def min_max_normalize(vector):
+#     min_val = np.min(vector)
+#     max_val = np.max(vector)
+#     # Avoid division by zero
+#     if max_val != min_val:
+#         normalized_vector = (vector - min_val) / (max_val - min_val)
+#     else:
+#         normalized_vector = vector
+#     return normalized_vector
+
+# def normalize_individual(qns_list):
+    
+#     QNS_list_new = []
+#     for qns in qns_list:
+#         qns_new = QNS_structure()
+#         qns_new.set_query_vector(qns.query_vector)
+#         qns_new.set_neighbor_vectors(qns.neighbor_vectors)
+#         qns_new.calculate_expert_score()
+#         QNS_list_new.append(qns_new)
+
+#     # Normalizing each position across all instances and storing min-max values
+#     for qns in qns_list:
+#         qns.query_vector = min_max_normalize(qns.query_vector)
+#         for idx in range(qns.neighbor_count):
+#             qns.neighbor_vectors[idx] = min_max_normalize(qns.neighbor_vectors[idx])
+
+#     return QNS_list_new 

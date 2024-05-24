@@ -5,76 +5,61 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
 
-from ImageUtilities import Google_Base_Patch16_224, DeiT_Base_Patch16_224, Beit_Base_Patch16_224, DinoV2_Base_Patch16_224, ResNet50_Base_224, VGG16_Base_224
-from ImageUtilities import Google_Base_Patch16_224_MLP, DeiT_Base_Patch16_224_MLP, Beit_Base_Patch16_224_MLP, DinoV2_Base_Patch16_224_MLP, ResNet50_Base_224_MLP, VGG16_Base_224_MLP
-
-from TrainTestUtilities import TripletDataset, train_triplets, save_model
-from PreprocessingUtilities import Sample_Manager
+from TabularUtilities import TabularMLP
+from TrainUtilities import TripletDataset, train_triplets, save_model
+from PreprocessingUtilities import sample_manager
 
 #Required Paths
 current_directory = os.getcwd()
 images_path='../data/images/'
 csvs_path ='../data/csvs/'
+pickle_path = current_directory + '/../data/pickles/'
+path_save = '../bin/'
 favorite_image_info = csvs_path + 'favorite_image_info.csv'
 patient_info = csvs_path + 'patient_info.csv'
 patient_images_info = csvs_path + 'patient_images.csv'
 catalogue_info = csvs_path + 'catalogue_info.csv'
 catalogue_user_info = csvs_path + 'catalogue_user_info.csv'
-train_pickle_path = current_directory + '/../data/pickles/qns_list_train_F.pkl'
-test_pickle_path  = current_directory + '/../data/pickles/qns_list_test_F.pkl'
-path_save = '../bin/'
 
 # Configs
 np.random.seed(10)
 torch.manual_seed(10)
 device = "cuda:0" # "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {device}")
-lr=0.00001
-num_epochs=1
-batch_size=16
+lr=0.0001
+num_epochs=100
+batch_size=512
 margin = 0.0001
 split_ratio=0.8
 catalogue_type = 'E'
 doctor_code=-1 # 39 57 36 -1
+model_name='TabularMLP'
 
 # Preprocessing
-QNS_list_train, QNS_list_test = Sample_Manager(images_path, train_pickle_path, test_pickle_path, catalogue_info, catalogue_user_info, 
+QNS_list_image_train, QNS_list_image_test, QNS_list_tabular_train, QNS_list_tabular_test = \
+sample_manager(images_path, pickle_path, catalogue_info, catalogue_user_info, 
 patient_info, favorite_image_info, patient_images_info, catalogue_type=catalogue_type, doctor_code=doctor_code, split_ratio=split_ratio, default=False)
 
-# # Down-Sampeling
-QNS_list_train = QNS_list_train[0:2]
-QNS_list_test = QNS_list_test[0:2]
+# for q in QNS_list_tabular_train:
+#     q.show_summary(str=False)
+
+# for q in QNS_list_tabular_test:
+#     q.show_summary(str=False)
 
 # Implemented Model
-models = {
-    "Google_Base_Patch16_224": Google_Base_Patch16_224(),
-    "DeiT_Base_Patch16_224": DeiT_Base_Patch16_224(),
-    "Beit_Base_Patch16_224": Beit_Base_Patch16_224(),
-    "DinoV2_Base_Patch16_224": DinoV2_Base_Patch16_224(),
-    "ResNet50_Base_224": ResNet50_Base_224(),
-    "VGG16_Base_224": VGG16_Base_224(),
+model = TabularMLP(5, 16, 5)
 
-    "Google_Base_Patch16_224_MLP": Google_Base_Patch16_224_MLP(),
-    "DinoV2_Base_Patch16_224_MLP": DinoV2_Base_Patch16_224_MLP(),
-    "Beit_Base_Patch16_224_MLP": Beit_Base_Patch16_224_MLP(),
-    "DeiT_Base_Patch16_224_MLP": DeiT_Base_Patch16_224_MLP(),
-    "ResNet50_Base_224_MLP": ResNet50_Base_224_MLP(),
-    "VGG16_Base_224_MLP": VGG16_Base_224_MLP()
-}
+# # Define Dataset & Dataloaders & Optimization Parameters
+train_dataset = TripletDataset('', QNS_list_tabular_train, transform=model.get_transform())
+test_dataset  = TripletDataset('', QNS_list_tabular_test,  transform=model.get_transform())
+train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) # later it should bea turned on ...
+test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+criterion     = TripletMarginLoss(margin=margin, p=2)
+optimizer     = optim.Adam(model.parameters(), lr=lr)
 
-for model_name, model in models.items():
-    
-    # Define Dataset & Dataloaders & Optimization Parameters
-    train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
-    test_dataset  = TripletDataset(images_path, QNS_list_test,  transform=model.get_transform())
-    train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # later it should bea turned on ...
-    test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
-    criterion     = TripletMarginLoss(margin=margin, p=2)
-    optimizer     = optim.Adam(model.parameters(), lr=lr)
+print(f'Training {model_name}...')
+model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_tabular_train, QNS_list_tabular_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
 
-    print(f'Training {model_name}...')
-    model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_train, QNS_list_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
-    
-    print(f'Saving {model_name}...')
-    save_model(model, f'{path_save}{model_name}/Finale.pl')
-    print(f'Done {model_name}!')
+print(f'Saving {model_name}...')
+save_model(model, f'{path_save}{model_name}/Finale.pl')
+print(f'Done {model_name}!')

@@ -6,6 +6,7 @@ import os
 import torch
 import pickle
 from scipy.spatial.distance import euclidean
+from PIL import Image
 
 # Function: Evaluates the validity of dates
 def is_valid_date(date_str):
@@ -275,7 +276,7 @@ class QNS_structure:
     def show_score_vector(self):
         print('Score-Vector: ', self.score_vector)
 
-    def show_summary(self,num_flag=False):
+    def show_summary(self, num_flag=False, str=True):
         if num_flag:
             init_dist = self.calculate_initial_distance ()
             init_score = self.calculate_initial_score ()
@@ -283,8 +284,13 @@ class QNS_structure:
         self.show_query_vector()
         for idx, neighbor in enumerate(self.neighbor_vectors):
             print(f'Neighbor NID:{idx:02} => Value: [ ', end='')
-            for n in neighbor:
-                print(f'{n}', end='')
+            if str == False:
+                for n in neighbor:
+                    print(f' {n:02}', end='')
+            else:
+                for n in neighbor:
+                    print(f'{n:}', end='')
+            print(' ]', end='')
             if num_flag:
                 print(f'Init Dist: {init_dist[idx]:06.3f}  | Dist-Based Score: {init_score[idx]:02d}')
             print(f' | Expert Score: {self.score_vector[idx]:02.1f}')
@@ -438,41 +444,131 @@ def edit_name_incase_using_resized(path, filename):
        image_path = os.path.join(path, resized_filename)
        return image_path
 
-def Sample_Manager(samples_path, train_pickle_path, test_pickle_path, catalogue_info, catalogue_user_info, patient_info, favorite_image_info, patient_images_info, catalogue_type='E', doctor_code=-1, split_ratio=0.8, default=True):
+def collaborative_tabular_normalize(qns_list, min_max_values=None):
+    if min_max_values is not None:
+        vec_len = len(min_max_values)
+    else:
+        vec_len = len(qns_list[0].query_vector)  # Assuming all vectors have the same length
+        min_max_values = []
+
+    all_elements = [[] for _ in range(vec_len)]
+
+    # Collecting all elements for each position from both query and neighbor vectors
+    for qns in qns_list:
+        for i in range(vec_len):
+            all_elements[i].append(qns.query_vector[i])
+            for neighbor_vector in qns.neighbor_vectors:
+                all_elements[i].append(neighbor_vector[i])
+    
+    # If min_max_values is provided, use it for normalization
+    if min_max_values:
+        for i in range(vec_len):
+            min_val, max_val = min_max_values[i]
+            all_elements[i] = [(v - min_val) / (max_val - min_val) if max_val != min_val else 0 for v in all_elements[i]]
+    else:
+        # Normalizing each position across all instances and storing min-max values
+        for i in range(vec_len):
+            min_val = np.min(all_elements[i])
+            max_val = np.max(all_elements[i])
+            all_elements[i]  = [(v - min_val) / (max_val - min_val) if max_val != min_val else 0 for v in all_elements[i]]
+            min_max_values.append((min_val, max_val))
+        print("Min_Max Values are: ", min_max_values)
+
+    # Updating the vectors in QNS_structure instances
+    for qns in qns_list:
+        for i in range(vec_len):
+            qns.query_vector[i] = all_elements[i].pop(0)
+            for neighbor_vector in qns.neighbor_vectors:
+                neighbor_vector[i] = all_elements[i].pop(0)
+
+    return min_max_values
+
+def sample_manager(samples_path, pickle_path, catalogue_info, catalogue_user_info, patient_info, favorite_image_info, patient_images_info, catalogue_type='E', doctor_code=-1, split_ratio=0.8, default=True):
 
     if default:
         print('Reading Samples...')
-        QNS_list, N = get_query_neighbor_elements_path(catalogue_info, catalogue_user_info, patient_info, favorite_image_info, patient_images_info,catalogue_type=catalogue_type, doctor_code=doctor_code) # 39 57 36 -1
+        QNS_image_list, QNS_image_count = get_query_neighbor_elements_path(catalogue_info, catalogue_user_info, patient_info, favorite_image_info, patient_images_info,catalogue_type=catalogue_type, doctor_code=doctor_code) # 39 57 36 -1
+
+        QNS_tabular_list, QNS_tabular_count = get_query_neighbor_elements(catalogue_info, catalogue_user_info, patient_info, doctor_code=doctor_code)
 
         # In-case print to check
-        #for q in QNS_list:
+        # for q in QNS_image_list:
+        #     q.show_summary()
+        # print("\n\n***************************\n\n")
+        # for q in QNS_tabular_list:
         #     q.show_summary()
         
         print('Shuffling Samples...')
-        np.random.shuffle(QNS_list)
+        np.random.shuffle(QNS_image_list)
+        np.random.shuffle(QNS_tabular_list)
 
         print('Modifying File Addressing')
-        for QNS_element in QNS_list:
+        for QNS_element in QNS_image_list:
             QNS_element.query_vector = edit_name_incase_using_resized(samples_path, QNS_element.query_vector)
             for j in range(0, QNS_element.neighbor_count):
                 QNS_element.neighbor_vectors[j] = edit_name_incase_using_resized(samples_path, QNS_element.neighbor_vectors[j])
 
         print('Train-Test Split...')
-        QNS_list_train = QNS_list[: int(np.floor(split_ratio * N))]
-        QNS_list_test  = QNS_list[int(np.floor(split_ratio * N)):]
+        QNS_image_list_train = QNS_image_list[: int(np.floor(split_ratio * QNS_image_count))]
+        QNS_image_list_test  = QNS_image_list[int(np.floor(split_ratio * QNS_image_count)):]
+
+        QNS_tabular_list_train = QNS_tabular_list[: int(np.floor(split_ratio * QNS_tabular_count))]
+        QNS_tabular_list_test  = QNS_tabular_list[int(np.floor(split_ratio * QNS_tabular_count)):]
 
         print('Saving QNS...')
-        with open(train_pickle_path, 'wb') as file:
-            pickle.dump(QNS_list_train, file, protocol=pickle.DEFAULT_PROTOCOL)
-        with open(test_pickle_path, 'wb') as file:
-            pickle.dump(QNS_list_test, file, protocol=pickle.DEFAULT_PROTOCOL)
+        with open(f'{pickle_path}_image_train.pkl', 'wb') as file:
+            pickle.dump(QNS_image_list_train, file, protocol=pickle.DEFAULT_PROTOCOL)
+        with open(f'{pickle_path}_image_test.pkl', 'wb') as file:
+            pickle.dump(QNS_image_list_test, file, protocol=pickle.DEFAULT_PROTOCOL)
+
+        with open(f'{pickle_path}_tabular_train.pkl', 'wb') as file:
+            pickle.dump(QNS_tabular_list_train, file, protocol=pickle.DEFAULT_PROTOCOL)
+        with open(f'{pickle_path}_tabular_test.pkl', 'wb') as file:
+            pickle.dump(QNS_tabular_list_test, file, protocol=pickle.DEFAULT_PROTOCOL)
+
     else:   
         print('Loading QNS...')
         # Load the KMeans model from the file
-        with open(train_pickle_path, 'rb') as file:
-            QNS_list_train = pickle.load(file)
-        with open(test_pickle_path, 'rb') as file:
-            QNS_list_test = pickle.load(file)
+        with open(f'{pickle_path}_image_train.pkl', 'rb') as file:
+            QNS_image_list_train = pickle.load(file)
+        with open(f'{pickle_path}_image_test.pkl', 'rb') as file:
+            QNS_image_list_test = pickle.load(file)
+        
+        with open(f'{pickle_path}_tabular_train.pkl', 'rb') as file:
+            QNS_tabular_list_train = pickle.load(file)
+        with open(f'{pickle_path}_tabular_test.pkl', 'rb') as file:
+            QNS_tabular_list_test = pickle.load(file)
+
+        min_max_values = collaborative_tabular_normalize(QNS_tabular_list_train)
+        collaborative_tabular_normalize(QNS_tabular_list_test, min_max_values)
+
+        # for q in QNS_tabular_list_train:
+        #     q.show_summary(str=False)
+
+        # for q in QNS_tabular_list_test:
+        #     q.show_summary(str=False)
+
     print('Done!')
 
-    return QNS_list_train, QNS_list_test
+    return QNS_image_list_train, QNS_image_list_test, QNS_tabular_list_train, QNS_tabular_list_test
+
+# Resize Images and Save In a Directory Before Training to Speed Up Training
+def resize_images(input_dir, output_dir, size=(224, 224)):
+    # Create the output directory if it doesn't exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Function to resize images
+    def resize_image(input_path, output_path, size):
+        with Image.open(input_path) as img:
+            img_resized = img.resize(size, Image.Resampling.LANCZOS)  # Use LANCZOS instead of ANTIALIAS
+            img_resized.save(output_path)
+
+    # Process all images in the input directory
+    for filename in os.listdir(input_dir):
+        if filename.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".gif")):  # Add more extensions if needed
+            input_path = os.path.join(input_dir, filename)
+            output_path = os.path.join(output_dir, filename)
+            resize_image(input_path, output_path, size)
+
+    print("All images have been resized and saved.")

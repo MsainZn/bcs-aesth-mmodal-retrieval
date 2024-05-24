@@ -8,8 +8,8 @@ from torch.nn import TripletMarginLoss
 from ImageUtilities import Google_Base_Patch16_224, DeiT_Base_Patch16_224, Beit_Base_Patch16_224, DinoV2_Base_Patch16_224, ResNet50_Base_224, VGG16_Base_224
 from ImageUtilities import Google_Base_Patch16_224_MLP, DeiT_Base_Patch16_224_MLP, Beit_Base_Patch16_224_MLP, DinoV2_Base_Patch16_224_MLP, ResNet50_Base_224_MLP, VGG16_Base_224_MLP
 
-from TrainTestUtilities import TripletDataset, train_triplets, save_model
-from PreprocessingUtilities import Sample_Manager
+from TrainUtilities import TripletDataset, train_triplets, save_model
+from PreprocessingUtilities import sample_manager
 
 #Required Paths
 current_directory = os.getcwd()
@@ -20,8 +20,7 @@ patient_info = csvs_path + 'patient_info.csv'
 patient_images_info = csvs_path + 'patient_images.csv'
 catalogue_info = csvs_path + 'catalogue_info.csv'
 catalogue_user_info = csvs_path + 'catalogue_user_info.csv'
-train_pickle_path = current_directory + '/../data/pickles/qns_list_train_F.pkl'
-test_pickle_path  = current_directory + '/../data/pickles/qns_list_test_F.pkl'
+pickle_path = current_directory + '/../data/pickles/'
 path_save = '../bin/'
 
 # Configs
@@ -38,12 +37,18 @@ catalogue_type = 'E'
 doctor_code=-1 # 39 57 36 -1
 
 # Preprocessing
-QNS_list_train, QNS_list_test = Sample_Manager(images_path, train_pickle_path, test_pickle_path, catalogue_info, catalogue_user_info, 
+QNS_list_image_train, QNS_list_image_test, QNS_list_tabular_train, QNS_list_tabular_test = \
+sample_manager(images_path, pickle_path, catalogue_info, catalogue_user_info, 
 patient_info, favorite_image_info, patient_images_info, catalogue_type=catalogue_type, doctor_code=doctor_code, split_ratio=split_ratio, default=False)
 
+# for q in QNS_list_image_train:
+#     q.show_summary()
+# for q in QNS_list_tabular_train:
+#     q.show_summary(str=False)
+
 # # Down-Sampeling
-QNS_list_train = QNS_list_train[0:2]
-QNS_list_test = QNS_list_test[0:2]
+# QNS_list_image_train = QNS_list_image_train[0:2]
+# QNS_list_image_test = QNS_list_image_test[0:2]
 
 # Implemented Model
 models = {
@@ -65,15 +70,15 @@ models = {
 for model_name, model in models.items():
     
     # Define Dataset & Dataloaders & Optimization Parameters
-    train_dataset = TripletDataset(images_path, QNS_list_train, transform=model.get_transform())
-    test_dataset  = TripletDataset(images_path, QNS_list_test,  transform=model.get_transform())
+    train_dataset = TripletDataset(images_path, QNS_list_image_train, transform=model.get_transform())
+    test_dataset  = TripletDataset(images_path, QNS_list_image_test,  transform=model.get_transform())
     train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=False) # later it should bea turned on ...
     test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
     criterion     = TripletMarginLoss(margin=margin, p=2)
     optimizer     = optim.Adam(model.parameters(), lr=lr)
 
     print(f'Training {model_name}...')
-    model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_train, QNS_list_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
+    model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_image_train, QNS_list_image_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
     
     print(f'Saving {model_name}...')
     save_model(model, f'{path_save}{model_name}/Finale.pl')

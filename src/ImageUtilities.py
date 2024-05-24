@@ -16,6 +16,9 @@ class Google_Base_Patch16_224(nn.Module):
         def transform(image_path):
             image = Image.open(image_path).convert('RGB')
             processed = self.feature_extractor(images=image, return_tensors="pt")
+            # pixel_values = processed['pixel_values']
+            #pixel_values = pixel_values.permute(0, 2, 3, 1)
+            #return pixel_values
             return processed['pixel_values'].squeeze(0)
         return transform
     
