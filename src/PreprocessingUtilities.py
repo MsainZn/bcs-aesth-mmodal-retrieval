@@ -516,37 +516,37 @@ def sample_manager(samples_path, pickle_path, catalogue_info, catalogue_user_inf
         QNS_tabular_list_test  = QNS_tabular_list[int(np.floor(split_ratio * QNS_tabular_count)):]
 
         print('Saving QNS...')
-        with open(f'{pickle_path}_image_train.pkl', 'wb') as file:
+        with open(f'{pickle_path}image_train.pkl', 'wb') as file:
             pickle.dump(QNS_image_list_train, file, protocol=pickle.DEFAULT_PROTOCOL)
-        with open(f'{pickle_path}_image_test.pkl', 'wb') as file:
+        with open(f'{pickle_path}image_test.pkl', 'wb') as file:
             pickle.dump(QNS_image_list_test, file, protocol=pickle.DEFAULT_PROTOCOL)
 
-        with open(f'{pickle_path}_tabular_train.pkl', 'wb') as file:
+        with open(f'{pickle_path}tabular_train.pkl', 'wb') as file:
             pickle.dump(QNS_tabular_list_train, file, protocol=pickle.DEFAULT_PROTOCOL)
-        with open(f'{pickle_path}_tabular_test.pkl', 'wb') as file:
+        with open(f'{pickle_path}tabular_test.pkl', 'wb') as file:
             pickle.dump(QNS_tabular_list_test, file, protocol=pickle.DEFAULT_PROTOCOL)
 
     else:   
         print('Loading QNS...')
         # Load the KMeans model from the file
-        with open(f'{pickle_path}_image_train.pkl', 'rb') as file:
+        with open(f'{pickle_path}image_train.pkl', 'rb') as file:
             QNS_image_list_train = pickle.load(file)
-        with open(f'{pickle_path}_image_test.pkl', 'rb') as file:
+        with open(f'{pickle_path}image_test.pkl', 'rb') as file:
             QNS_image_list_test = pickle.load(file)
         
-        with open(f'{pickle_path}_tabular_train.pkl', 'rb') as file:
+        with open(f'{pickle_path}tabular_train.pkl', 'rb') as file:
             QNS_tabular_list_train = pickle.load(file)
-        with open(f'{pickle_path}_tabular_test.pkl', 'rb') as file:
+        with open(f'{pickle_path}tabular_test.pkl', 'rb') as file:
             QNS_tabular_list_test = pickle.load(file)
 
-        min_max_values = collaborative_tabular_normalize(QNS_tabular_list_train)
-        collaborative_tabular_normalize(QNS_tabular_list_test, min_max_values)
+    # min_max_values = collaborative_tabular_normalize(QNS_tabular_list_train)
+    # collaborative_tabular_normalize(QNS_tabular_list_test, min_max_values)
 
-        # for q in QNS_tabular_list_train:
-        #     q.show_summary(str=False)
+    # for q in QNS_tabular_list_train:
+    #     q.show_summary(str=False)
 
-        # for q in QNS_tabular_list_test:
-        #     q.show_summary(str=False)
+    # for q in QNS_tabular_list_test:
+    #     q.show_summary(str=False)
 
     print('Done!')
 

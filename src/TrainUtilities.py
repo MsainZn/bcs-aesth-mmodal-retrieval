@@ -214,7 +214,6 @@ def load_model(model, filepath, device='cpu'):
     print(f"Model loaded from {filepath}")
     return model
 
-
 # def preprocess_single_sample(image_path, transform):
 #     x = Image.open(image_path).convert('RGB')
 #     x = transform(x)['pixel_values'].unsqueeze(0)

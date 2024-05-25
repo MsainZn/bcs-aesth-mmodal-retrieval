@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from torch.nn import TripletMarginLoss
 
 from TabularUtilities import TabularMLP
-from TrainUtilities import TripletDataset, train_triplets, save_model
+from TrainUtilities import TripletDataset, train_triplets, save_model, evaluate_nddg
 from PreprocessingUtilities import sample_manager
 
 #Required Paths
@@ -33,7 +33,6 @@ margin = 0.0001
 split_ratio=0.8
 catalogue_type = 'E'
 doctor_code=-1 # 39 57 36 -1
-model_name='TabularMLP'
 
 # Preprocessing
 QNS_list_image_train, QNS_list_image_test, QNS_list_tabular_train, QNS_list_tabular_test = \
@@ -47,19 +46,22 @@ patient_info, favorite_image_info, patient_images_info, catalogue_type=catalogue
 #     q.show_summary(str=False)
 
 # Implemented Model
-model = TabularMLP(5, 16, 5)
+models = {
+    "Tabular-MLP": TabularMLP(5, 16, 5)
+}
 
-# # Define Dataset & Dataloaders & Optimization Parameters
-train_dataset = TripletDataset('', QNS_list_tabular_train, transform=model.get_transform())
-test_dataset  = TripletDataset('', QNS_list_tabular_test,  transform=model.get_transform())
-train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) # later it should bea turned on ...
-test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
-criterion     = TripletMarginLoss(margin=margin, p=2)
-optimizer     = optim.Adam(model.parameters(), lr=lr)
+for model_name, model in models.items():
+    # # Define Dataset & Dataloaders & Optimization Parameters
+    train_dataset = TripletDataset('', QNS_list_tabular_train, transform=model.get_transform())
+    test_dataset  = TripletDataset('', QNS_list_tabular_test,  transform=model.get_transform())
+    train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) # later it should bea turned on ...
+    test_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+    criterion     = TripletMarginLoss(margin=margin, p=2)
+    optimizer     = optim.Adam(model.parameters(), lr=lr)
 
-print(f'Training {model_name}...')
-model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_tabular_train, QNS_list_tabular_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
+    print(f'Training {model_name}...')
+    model, _, _ = train_triplets(model, train_loader, test_loader, QNS_list_tabular_train, QNS_list_tabular_test, optimizer, criterion, num_epochs=num_epochs, model_name=model_name, device=device, path_save=path_save)
 
-print(f'Saving {model_name}...')
-save_model(model, f'{path_save}{model_name}/Finale.pl')
-print(f'Done {model_name}!')
+    print(f'Saving {model_name}...')
+    save_model(model, f'{path_save}{model_name}/Finale.pl')
+    print(f'Done {model_name}!')
